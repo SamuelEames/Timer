@@ -61,7 +61,7 @@ upper zone creates the complete message on the display.
 #define LED_PIN     		6
 
 
-timerStates currentState = ST_SW_READY;
+timerStates currentState = ST_RT_LOBBY;
 timerStates lastState = ST_SW_READY;
 
 
@@ -96,7 +96,7 @@ void getSWTimerText(char *psz, uint32_t elapsedMillis)
 	if (elapsedMillis < 100000)							// We only have space for 3 characters
 		sprintf(psz, "%02d%c%01d", s, '.', ms);
 	else if (elapsedMillis > 999000)
-		currentState = ST_SW_STOP;							// Stop timer after 999 seconds
+		currentState = ST_SW_READY;							// Stop timer after 999 seconds
 		//sprintf(psz, "%c%c%c", '0', '0', '0');			// Can't dispay over 999 seconds
 	else
 		sprintf(psz, "%02d", s);
@@ -141,6 +141,7 @@ void setup(void)
 	P.setZone(ZONE_UPPER, ZONE_SIZE, MAX_DEVICES - 1);
 	P.setFont(numeric7SegDouble);
 
+
 	P.setCharSpacing(P.getCharSpacing() * 2); 				// double height --> double spacing
 
 	P.displayZoneText(ZONE_LOWER, dispText_L, PA_CENTER, SPEED_TIME, PAUSE_TIME, PA_PRINT, PA_NO_EFFECT);
@@ -148,6 +149,11 @@ void setup(void)
 
 	P.setIntensity(2);
 }
+
+
+// Global variables
+uint8_t  curText;
+const char *pc = "READY";
 
 
 void loop(void)
@@ -169,7 +175,6 @@ void loop(void)
 		case ST_SW_READY:
 			analogWrite(LED_PIN, 255); 
 
-			P.displayAnimate();											// Show timer
 			if (P.getZoneStatus(ZONE_LOWER) && P.getZoneStatus(ZONE_UPPER))
 			{
 				if (millis() - lastTime > DISP_REFRESH)
@@ -179,10 +184,11 @@ void loop(void)
 					sprintf(dispText_L, "00.0");
 					createHString(dispText_H, dispText_L);
 					
-					P.displayReset();
-					P.synchZoneStart();
+					P.displayReset();				
+					P.synchZoneStart();			// Ensure lower & upper zones are in sync
 				}
 			}
+			P.displayAnimate();											// Show timer
 
 			resetBtn = digitalRead(BTN_RESET_PIN);				// Get button states
 			startBtn = digitalRead(BTN_START_PIN);
@@ -208,7 +214,6 @@ void loop(void)
 
 		
 			// Show timer
-			P.displayAnimate();
 			if (P.getZoneStatus(ZONE_LOWER) && P.getZoneStatus(ZONE_UPPER))
 			{
 				// Adjust the time string if we have to. It will be adjusted
@@ -216,16 +221,13 @@ void loop(void)
 				if (millis() - lastTime >= DISP_REFRESH)
 				{
 					lastTime = millis();
-					
 					getSWTimerText(dispText_L, millis() - timer_startTime);
 					createHString(dispText_H, dispText_L);
-					
 					P.displayReset();
-
-					// synchronise the start
-					P.synchZoneStart();
+					P.synchZoneStart();			// synchronise the start
 				}
 			}
+			P.displayAnimate();
 
 			//Check button
 			if (millis() - timer_startTime > DEBOUNCE)			// don't allow resets in first second
@@ -247,7 +249,6 @@ void loop(void)
 
 			analogWrite(LED_PIN, 0);
 
-			P.displayAnimate();
 			if (P.getZoneStatus(ZONE_LOWER) && P.getZoneStatus(ZONE_UPPER))
 			{
 				if (millis() - lastTime >= FLASH)
@@ -258,7 +259,9 @@ void loop(void)
 					P.synchZoneStart();
 				}
 			}
+			P.displayAnimate();
 
+			// flashes display by alternating overall brightness
 			if (flasher)
 				P.setIntensity(0);
 			else
@@ -279,6 +282,54 @@ void loop(void)
 			startBtn_last = startBtn;				
 
 			break;
+
+		case ST_RT_LOBBY:
+			// Display "Reaction Test" on screen
+
+			// Change font to single height
+			P.setFont(SE_CapsNums_V1);
+			P.setCharSpacing(1); 
+			P.displayZoneText(ZONE_UPPER, "REACTION", PA_CENTER, SPEED_TIME, PAUSE_TIME, PA_PRINT, PA_PRINT);
+			P.displayZoneText(ZONE_LOWER, "TEST", PA_CENTER, SPEED_TIME, PAUSE_TIME, PA_PRINT, PA_PRINT);
+
+
+			P.displayAnimate();
+
+			// Check for button press to begin game
+
+
+			break;
+
+
+
+		case ST_RT_READY:
+
+			// Display "ready"
+
+			// Wait for random time length (after button released from previous state)
+
+			// Check button for early presses (begin checking after 1s for debounce reasons, etc) 
+
+			// Display "GO" and start timing
+
+			break;
+
+		case ST_RT_GO:
+
+			// Check for button press
+
+			break;
+
+		case ST_RT_STOP:
+
+			// Display reaction time 
+
+			// Check for button press to play again
+
+			// Time out after 30 second sand go back to lobby
+
+			break;
+
 
 		default:
 			break;
