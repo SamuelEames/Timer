@@ -59,7 +59,11 @@ upper zone creates the complete message on the display.
 #define BTN_START_PIN   18
 #define BTN_RESET_PIN   19
 #define LED_PIN     		6
+#define RAND_ANALOG_PIN	21 				// Analog pin -- Leave pin floating -- used to seed random number generator
 
+// Rection Test Vars
+#define RT_DELAY_MIN 		1500			// Minimum delay period for start of reaction test
+#define RT_DELAY_MAX		8000			// Maximum delay period for start of reaction test
 
 timerStates currentState = ST_RT_LOBBY;
 timerStates lastState = ST_SW_READY;
@@ -88,18 +92,24 @@ char  dispText_H[MAX_MESG];
 void getSWTimerText(char *psz, uint32_t elapsedMillis)
 {
 	// Generates string from given value
-	uint16_t  s, ms;
+	uint16_t  secs, ms_10, ms_100;
 
-	s = elapsedMillis / 1000;								// Calculate seconds
-	ms = (elapsedMillis % 1000) / 100; 					// First decimal place of seconds
+	secs 		= (elapsedMillis / 1000);							// Calculate seconds
+	ms_10 	= (elapsedMillis % 1000) / 10; 					// Remainder of milliseconds
+	ms_100 	= (elapsedMillis % 1000) / 100; 				// Remainder of milliseconds
 
-	if (elapsedMillis < 100000)							// We only have space for 3 characters
-		sprintf(psz, "%02d%c%01d", s, '.', ms);
+
+	if (elapsedMillis < 1000)
+		sprintf(psz, "%c%03d", '.', elapsedMillis);
+	else if (elapsedMillis < 10000 )
+		sprintf(psz, "%01d%c%02d", secs, '.', ms_10);
+	else if (elapsedMillis < 100000)							// We only have space for 3 characters and '.'
+		sprintf(psz, "%02d%c%01d", secs, '.', ms_100);
 	else if (elapsedMillis > 999000)
 		currentState = ST_SW_READY;							// Stop timer after 999 seconds
 		//sprintf(psz, "%c%c%c", '0', '0', '0');			// Can't dispay over 999 seconds
 	else
-		sprintf(psz, "%02d", s);
+		sprintf(psz, "%02d", secs);
 
 	return;
 }
@@ -132,6 +142,7 @@ void setup(void)
 	pinMode(BTN_START_PIN, INPUT_PULLUP);
 	pinMode(BTN_RESET_PIN, INPUT_PULLUP);
 	pinMode(LED_PIN, OUTPUT);
+	pinMode(RAND_ANALOG_PIN, INPUT);
 
 	// initialise the LED display
 	P.begin(MAX_ZONES);
@@ -139,27 +150,29 @@ void setup(void)
 	// Set up zones for 2 halves of the display
 	P.setZone(ZONE_LOWER, 0, ZONE_SIZE - 1);
 	P.setZone(ZONE_UPPER, ZONE_SIZE, MAX_DEVICES - 1);
-	P.setFont(numeric7SegDouble);
+	// P.setFont(numeric7SegDouble_V2);
 
 
-	P.setCharSpacing(P.getCharSpacing() * 2); 				// double height --> double spacing
+	// P.setCharSpacing(2); 				// double height --> double spacing
 
-	P.displayZoneText(ZONE_LOWER, dispText_L, PA_CENTER, SPEED_TIME, PAUSE_TIME, PA_PRINT, PA_NO_EFFECT);
-	P.displayZoneText(ZONE_UPPER, dispText_H, PA_CENTER, SPEED_TIME, PAUSE_TIME, PA_PRINT, PA_NO_EFFECT);
+	// P.displayZoneText(ZONE_LOWER, dispText_L, PA_CENTER, SPEED_TIME, PAUSE_TIME, PA_PRINT, PA_NO_EFFECT);
+	// P.displayZoneText(ZONE_UPPER, dispText_H, PA_CENTER, SPEED_TIME, PAUSE_TIME, PA_PRINT, PA_NO_EFFECT);
 
 	P.setIntensity(2);
+
+	delay(100);						// For some reason the display likes a delay here... not sure why 
+
+
+	Serial.begin(115200);						// Open comms line
+	// while (!Serial) ; 							// Wait for serial port to be available
 }
 
 
-// Global variables
-uint8_t  curText;
-const char *pc = "READY";
 
-
-void loop(void)
+void loop()
 {
 	static uint32_t timer_startTime = 0; 	// Start time of timer
-	static uint32_t lastTime = 0; 	// used for refesh screen interval
+	static uint32_t disp_lastTime = 0; 	// used for refesh screen interval
 
 	static bool startBtn = 1; 			// Buttons are normally high, so initialise variables to that
 	static bool startBtn_last = 1;
@@ -168,7 +181,9 @@ void loop(void)
 
 	static bool flasher;
 	static uint8_t Brightness = 0;
-	static int direction = 1;
+	static int8_t direction = 1;
+
+	static uint16_t RT_Delay;
 
 	switch (currentState)
 	{
@@ -177,9 +192,9 @@ void loop(void)
 
 			if (P.getZoneStatus(ZONE_LOWER) && P.getZoneStatus(ZONE_UPPER))
 			{
-				if (millis() - lastTime > DISP_REFRESH)
+				if (millis() - disp_lastTime > DISP_REFRESH)
 				{
-					lastTime = millis();
+					disp_lastTime = millis();
 					
 					sprintf(dispText_L, "00.0");
 					createHString(dispText_H, dispText_L);
@@ -218,9 +233,9 @@ void loop(void)
 			{
 				// Adjust the time string if we have to. It will be adjusted
 				// every second at least for the flashing colon separator.
-				if (millis() - lastTime >= DISP_REFRESH)
+				if (millis() - disp_lastTime >= DISP_REFRESH)
 				{
-					lastTime = millis();
+					disp_lastTime = millis();
 					getSWTimerText(dispText_L, millis() - timer_startTime);
 					createHString(dispText_H, dispText_L);
 					P.displayReset();
@@ -251,9 +266,9 @@ void loop(void)
 
 			if (P.getZoneStatus(ZONE_LOWER) && P.getZoneStatus(ZONE_UPPER))
 			{
-				if (millis() - lastTime >= FLASH)
+				if (millis() - disp_lastTime >= FLASH)
 				{
-					lastTime = millis();
+					disp_lastTime = millis();
 					flasher = !flasher;
 					P.displayReset();
 					P.synchZoneStart();
@@ -286,17 +301,39 @@ void loop(void)
 		case ST_RT_LOBBY:
 			// Display "Reaction Test" on screen
 
-			// Change font to single height
-			P.setFont(SE_CapsNums_V1);
-			P.setCharSpacing(1); 
-			P.displayZoneText(ZONE_UPPER, "REACTION", PA_CENTER, SPEED_TIME, PAUSE_TIME, PA_PRINT, PA_PRINT);
-			P.displayZoneText(ZONE_LOWER, "TEST", PA_CENTER, SPEED_TIME, PAUSE_TIME, PA_PRINT, PA_PRINT);
+			if (lastState != currentState)
+			{
+				Serial.println("LOBBY");
+				lastState = currentState;
 
 
-			P.displayAnimate();
+				P.setFont(SE_CapsNums_V1);		// Change font to single height
+				P.setCharSpacing(1); 					// 1 Column space
+
+				// Display message
+				P.displayZoneText(ZONE_UPPER, "REACTION", PA_CENTER, SPEED_TIME, PAUSE_TIME, PA_PRINT, PA_PRINT);
+				P.displayZoneText(ZONE_LOWER, "TEST", PA_CENTER, SPEED_TIME, PAUSE_TIME, PA_PRINT, PA_PRINT);
+				P.synchZoneStart();
+				P.displayAnimate();
+			}
+
 
 			// Check for button press to begin game
 
+			startBtn = digitalRead(BTN_START_PIN);
+
+			if (!startBtn)
+			{
+				if (startBtn_last)
+				{
+					currentState = ST_RT_READY;
+
+
+
+				}
+			}
+
+			startBtn_last = startBtn;	
 
 			break;
 
@@ -304,11 +341,76 @@ void loop(void)
 
 		case ST_RT_READY:
 
-			// Display "ready"
+			if (lastState != currentState)
+			{
+				lastState = currentState;
+
+				// Display "ready"
+				P.setFont(numeric7SegDouble_V2);
+				P.setCharSpacing(1);
+
+				sprintf(dispText_L, "READY");
+				createHString(dispText_H, dispText_L);
+
+				P.displayZoneText(ZONE_LOWER, dispText_L, PA_CENTER, SPEED_TIME, PAUSE_TIME, PA_PRINT, PA_NO_EFFECT);
+				P.displayZoneText(ZONE_UPPER, dispText_H, PA_CENTER, SPEED_TIME, PAUSE_TIME, PA_PRINT, PA_NO_EFFECT);
+				P.synchZoneStart();
+
+				Serial.println("READY");
+
+				delay(100);
+				P.displayAnimate();
+
+
+				while	(!digitalRead(BTN_START_PIN))
+					; // do nothing until button is released from previous state
+
+				randomSeed(analogRead(RAND_ANALOG_PIN)); 		// Seed random number generator
+				RT_Delay = random(RT_DELAY_MIN, RT_DELAY_MAX);
+				timer_startTime = millis(); 												// Initiate random delay timer timer
+			}
+
+
 
 			// Wait for random time length (after button released from previous state)
+			if (timer_startTime + RT_Delay < millis())
+			{
+				currentState = ST_RT_GO;
+
+				analogWrite(LED_PIN, 255);
+
+				P.setFont(numeric7SegDouble_V2);
+				P.setCharSpacing(2);
+
+				sprintf(dispText_L, "GO!");
+				createHString(dispText_H, dispText_L);
+
+				P.displayZoneText(ZONE_LOWER, dispText_L, PA_CENTER, SPEED_TIME, PAUSE_TIME, PA_PRINT, PA_NO_EFFECT);
+				P.displayZoneText(ZONE_UPPER, dispText_H, PA_CENTER, SPEED_TIME, PAUSE_TIME, PA_PRINT, PA_NO_EFFECT);
+				P.synchZoneStart();
+				P.displayAnimate();
+
+
+				timer_startTime = millis();
+				// TODO - handle overflow case -- happens every 70mins
+			}
 
 			// Check button for early presses (begin checking after 1s for debounce reasons, etc) 
+			if (millis() - timer_startTime > RT_DELAY_MIN/2)
+			{
+				if (!digitalRead(BTN_START_PIN))
+				{
+					// Record elapsed time
+					timer_startTime = 0;
+
+					// Jump to new state
+					currentState = ST_RT_STOP;
+				}
+			}
+
+
+
+
 
 			// Display "GO" and start timing
 
@@ -316,15 +418,96 @@ void loop(void)
 
 		case ST_RT_GO:
 
+			if (lastState != currentState)
+			{
+				Serial.println("GO!");
+
+				lastState = currentState;
+			}
+
+			if (!digitalRead(BTN_START_PIN))
+			{
+				// Record elapsed time
+				timer_startTime = millis() - timer_startTime;
+
+				// Jump to new state
+				currentState = ST_RT_STOP;
+			}
+
 			// Check for button press
 
 			break;
 
 		case ST_RT_STOP:
 
-			// Display reaction time 
+			if (currentState != lastState)
+			{
+				lastState = currentState;
+				analogWrite(LED_PIN, 0);
+
+				Serial.println("STOP");
+				Serial.print("Reaction time = ");
+				Serial.print(timer_startTime);
+				Serial.println(" milli secs");
+
+				if (timer_startTime == 0)
+				{
+					// Button pressed early
+					sprintf(dispText_L, "EARLY");
+					createHString(dispText_H, dispText_L);
+					P.setCharSpacing(1);
+				}
+				else
+				{
+					// Display reaction time 
+					P.setCharSpacing(2);
+					getSWTimerText(dispText_L, timer_startTime);
+					createHString(dispText_H, dispText_L);
+				}
+
+				P.displayZoneText(ZONE_LOWER, dispText_L, PA_CENTER, SPEED_TIME, PAUSE_TIME, PA_PRINT, PA_NO_EFFECT);
+				P.displayZoneText(ZONE_UPPER, dispText_H, PA_CENTER, SPEED_TIME, PAUSE_TIME, PA_PRINT, PA_NO_EFFECT);
+
+			}
+
+
+			if (P.getZoneStatus(ZONE_LOWER) && P.getZoneStatus(ZONE_UPPER))
+			{
+				if (millis() - disp_lastTime >= FLASH)
+				{
+					disp_lastTime = millis();
+					flasher = !flasher;
+					P.displayReset();
+					P.synchZoneStart();
+				}
+			}
+			P.displayAnimate();
+
+			// flashes display by alternating overall brightness
+			if (flasher)
+				P.setIntensity(0);
+			else
+				P.setIntensity(5);
 
 			// Check for button press to play again
+			startBtn = digitalRead(BTN_START_PIN);		// Get button states
+			resetBtn = digitalRead(BTN_RESET_PIN);
+
+			if (resetBtn && !startBtn) 					// If (only) reset button pressed...
+			{
+				if (startBtn_last)							// and wasn't prevously
+				{
+					currentState = ST_RT_READY;			// Reset!
+					P.setIntensity(2);
+				}
+			}
+			resetBtn_Last = resetBtn;						// Save button states
+			startBtn_last = startBtn;	
+
+
+
+
+
 
 			// Time out after 30 second sand go back to lobby
 
