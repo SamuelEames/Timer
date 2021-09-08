@@ -44,8 +44,8 @@ upper zone creates the complete message on the display.
 
 // DISPLAY SETUP
 #define HARDWARE_TYPE 	MD_MAX72XX::FC16_HW
-#define MAX_ZONES 		2
-#define ZONE_SIZE 		5
+#define MAX_ZONES 			2
+#define ZONE_SIZE 			5
 #define MAX_DEVICES 		(MAX_ZONES * ZONE_SIZE)
 
 #define ZONE_UPPER  		1
@@ -55,6 +55,7 @@ upper zone creates the complete message on the display.
 #define DISP_CLK_PIN   	15
 #define DISP_DATA_PIN  	16
 #define DISP_CS_PIN    	10
+#define BEEP_PIN 				5
 
 #define BTN_START_PIN   18
 #define BTN_RESET_PIN   19
@@ -75,7 +76,7 @@ MD_Parola P = MD_Parola(HARDWARE_TYPE, DISP_CS_PIN, MAX_DEVICES);
 #define SPEED_TIME  		75
 #define PAUSE_TIME  		0
 
-#define MAX_MESG  		6
+#define MAX_MESG  			6
 
 
 #define DISP_REFRESH 	100 		// (ms) update rate of display
@@ -143,6 +144,7 @@ void setup(void)
 	pinMode(BTN_RESET_PIN, INPUT_PULLUP);
 	pinMode(LED_PIN, OUTPUT);
 	pinMode(RAND_ANALOG_PIN, INPUT);
+	pinMode(BEEP_PIN, OUTPUT);
 
 	// initialise the LED display
 	P.begin(MAX_ZONES);
@@ -155,9 +157,12 @@ void setup(void)
 
 	delay(100);						// For some reason the display likes a delay here... not sure why 
 
+	digitalWrite(BEEP_PIN, HIGH);		// turn off beeper
 
-	Serial.begin(115200);						// Open comms line
-	// while (!Serial) ; 							// Wait for serial port to be available
+	#ifdef DEBUG
+		Serial.begin(115200);						// Open comms line
+		while (!Serial) ; 							// Wait for serial port to be available
+	#endif
 }
 
 
@@ -297,13 +302,13 @@ void loop()
 
 			if (lastState != currentState)
 			{
-				Serial.println("LOBBY");
+				DPRINTLN(F("LOBBY"));
 				lastState = currentState;
 				analogWrite(LED_PIN, 255);
 
 
 				P.setIntensity(7);
-				P.setFont(SE_CapsNums_V1);		// Change font to single height
+				P.setFont(SE_CapsNums_V2);		// Change font to single height
 				P.setCharSpacing(1); 					// 1 Column space
 
 				// Display message
@@ -321,7 +326,10 @@ void loop()
 			if (!startBtn)
 			{
 				if (startBtn_last)
+				{
 					currentState = ST_RT_READY;
+					// delay(500);										// Delay for display
+				}
 			}
 
 			startBtn_last = startBtn;	
@@ -334,23 +342,23 @@ void loop()
 
 			if (lastState != currentState)
 			{
+				DPRINTLN(F("READY"));
 				lastState = currentState;
 
 				analogWrite(LED_PIN, 0);
 
 				// Display "ready"
-				P.setIntensity(7);
+				P.setIntensity(4);
 				P.setFont(numeric7SegDouble_V2);
 				P.setCharSpacing(1);
 
 				sprintf(dispText_L, "READY");
 				createHString(dispText_H, dispText_L);
 
-				P.displayZoneText(ZONE_LOWER, dispText_L, PA_CENTER, SPEED_TIME, PAUSE_TIME, PA_PRINT, PA_NO_EFFECT);
 				P.displayZoneText(ZONE_UPPER, dispText_H, PA_CENTER, SPEED_TIME, PAUSE_TIME, PA_PRINT, PA_NO_EFFECT);
+				P.displayZoneText(ZONE_LOWER, dispText_L, PA_CENTER, SPEED_TIME, PAUSE_TIME, PA_PRINT, PA_NO_EFFECT);
 				P.synchZoneStart();
 
-				Serial.println("READY");
 
 				delay(100);
 				P.displayAnimate();
@@ -384,6 +392,7 @@ void loop()
 				P.synchZoneStart();
 				P.displayAnimate();
 
+				digitalWrite(BEEP_PIN, LOW);
 
 				timer_startTime = millis();
 			}
@@ -404,7 +413,7 @@ void loop()
 			// Display "GO" and start timing
 			if (lastState != currentState)
 			{
-				Serial.println("GO!");
+				DPRINTLN(F("GO!"));
 				lastState = currentState;
 			}
 
@@ -432,12 +441,13 @@ void loop()
 				timer_startTime = millis();
 
 				analogWrite(LED_PIN, 255);
+				digitalWrite(BEEP_PIN, HIGH);
 
 
-				// Serial.println("STOP");
-				// Serial.print("Reaction time = ");
-				// Serial.print(timer_elapsed);
-				// Serial.println(" milli secs");
+				DPRINTLN(F("STOP"));
+				DPRINT(F("Reaction time = "));
+				DPRINT(timer_elapsed);
+				DPRINTLN(F(" milli secs"));
 
 				if (timer_elapsed == 0) 								// Button was pushed early
 				{
