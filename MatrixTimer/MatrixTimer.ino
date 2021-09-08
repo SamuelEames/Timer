@@ -82,6 +82,7 @@ MD_Parola P = MD_Parola(HARDWARE_TYPE, DISP_CS_PIN, MAX_DEVICES);
 #define DEBOUNCE			300		// (ms) button debounce
 #define FLASH 				300		// (ms) Period timer flashes with once stopped
 
+#define TIMEOUT				FLASH * 34 		// Timeout - change state if nothing happened in this time 
 
 
 // Global variables
@@ -106,10 +107,9 @@ void getSWTimerText(char *psz, uint32_t elapsedMillis)
 	else if (elapsedMillis < 100000)							// We only have space for 3 characters and '.'
 		sprintf(psz, "%02d%c%01d", secs, '.', ms_100);
 	else if (elapsedMillis > 999000)
-		currentState = ST_SW_READY;							// Stop timer after 999 seconds
-		//sprintf(psz, "%c%c%c", '0', '0', '0');			// Can't dispay over 999 seconds
+		currentState = ST_SW_READY;							// Stop timer after 999 seconds (Can't dispay over 999 seconds)
 	else
-		sprintf(psz, "%02d", secs);
+		sprintf(psz, "%d", secs);
 
 	return;
 }
@@ -150,13 +150,6 @@ void setup(void)
 	// Set up zones for 2 halves of the display
 	P.setZone(ZONE_LOWER, 0, ZONE_SIZE - 1);
 	P.setZone(ZONE_UPPER, ZONE_SIZE, MAX_DEVICES - 1);
-	// P.setFont(numeric7SegDouble_V2);
-
-
-	// P.setCharSpacing(2); 				// double height --> double spacing
-
-	// P.displayZoneText(ZONE_LOWER, dispText_L, PA_CENTER, SPEED_TIME, PAUSE_TIME, PA_PRINT, PA_NO_EFFECT);
-	// P.displayZoneText(ZONE_UPPER, dispText_H, PA_CENTER, SPEED_TIME, PAUSE_TIME, PA_PRINT, PA_NO_EFFECT);
 
 	P.setIntensity(2);
 
@@ -173,6 +166,7 @@ void loop()
 {
 	static uint32_t timer_startTime = 0; 	// Start time of timer
 	static uint32_t disp_lastTime = 0; 	// used for refesh screen interval
+	static uint32_t timer_elapsed = 0;	// Elapsed time of timer
 
 	static bool startBtn = 1; 			// Buttons are normally high, so initialise variables to that
 	static bool startBtn_last = 1;
@@ -305,8 +299,10 @@ void loop()
 			{
 				Serial.println("LOBBY");
 				lastState = currentState;
+				analogWrite(LED_PIN, 255);
 
 
+				P.setIntensity(7);
 				P.setFont(SE_CapsNums_V1);		// Change font to single height
 				P.setCharSpacing(1); 					// 1 Column space
 
@@ -325,12 +321,7 @@ void loop()
 			if (!startBtn)
 			{
 				if (startBtn_last)
-				{
 					currentState = ST_RT_READY;
-
-
-
-				}
 			}
 
 			startBtn_last = startBtn;	
@@ -345,7 +336,10 @@ void loop()
 			{
 				lastState = currentState;
 
+				analogWrite(LED_PIN, 0);
+
 				// Display "ready"
+				P.setIntensity(7);
 				P.setFont(numeric7SegDouble_V2);
 				P.setCharSpacing(1);
 
@@ -392,7 +386,6 @@ void loop()
 
 
 				timer_startTime = millis();
-				// TODO - handle overflow case -- happens every 70mins
 			}
 
 			// Check button for early presses (begin checking after 1s for debounce reasons, etc) 
@@ -400,74 +393,71 @@ void loop()
 			{
 				if (!digitalRead(BTN_START_PIN))
 				{
-					// Record elapsed time
-					timer_startTime = 0;
-
-					// Jump to new state
-					currentState = ST_RT_STOP;
+					timer_elapsed = 0;								// Record elapsed time
+					currentState = ST_RT_STOP;					// Jump to new state
 				}
 			}
-
-
-
-
-
-			// Display "GO" and start timing
-
 			break;
 
-		case ST_RT_GO:
 
+		case ST_RT_GO:
+			// Display "GO" and start timing
 			if (lastState != currentState)
 			{
 				Serial.println("GO!");
-
 				lastState = currentState;
 			}
 
+			// Check for button press
 			if (!digitalRead(BTN_START_PIN))
 			{
-				// Record elapsed time
-				timer_startTime = millis() - timer_startTime;
-
-				// Jump to new state
-				currentState = ST_RT_STOP;
+				timer_elapsed = millis() - timer_startTime;		// Record elapsed time
+				currentState = ST_RT_STOP;											// Jump to new state
 			}
 
-			// Check for button press
-
+			// Stop if >10s has elapsed
+			else if (millis() - timer_startTime > TIMEOUT)
+			{
+				timer_elapsed = TIMEOUT;										// Record elapsed time
+				currentState = ST_RT_STOP;											// Jump to new state
+			}
 			break;
+
 
 		case ST_RT_STOP:
 
 			if (currentState != lastState)
 			{
 				lastState = currentState;
-				analogWrite(LED_PIN, 0);
+				timer_startTime = millis();
 
-				Serial.println("STOP");
-				Serial.print("Reaction time = ");
-				Serial.print(timer_startTime);
-				Serial.println(" milli secs");
+				analogWrite(LED_PIN, 255);
 
-				if (timer_startTime == 0)
+
+				// Serial.println("STOP");
+				// Serial.print("Reaction time = ");
+				// Serial.print(timer_elapsed);
+				// Serial.println(" milli secs");
+
+				if (timer_elapsed == 0) 								// Button was pushed early
 				{
-					// Button pressed early
 					sprintf(dispText_L, "EARLY");
-					createHString(dispText_H, dispText_L);
 					P.setCharSpacing(1);
 				}
-				else
+				else if (timer_elapsed >= TIMEOUT) 	// Button was pushed late (timed out)
 				{
-					// Display reaction time 
+					sprintf(dispText_L, "LATE");
+					P.setCharSpacing(1);
+				}
+				else  																		// Display reaction time 
+				{
 					P.setCharSpacing(2);
-					getSWTimerText(dispText_L, timer_startTime);
-					createHString(dispText_H, dispText_L);
+					getSWTimerText(dispText_L, timer_elapsed);
 				}
 
+				createHString(dispText_H, dispText_L);
 				P.displayZoneText(ZONE_LOWER, dispText_L, PA_CENTER, SPEED_TIME, PAUSE_TIME, PA_PRINT, PA_NO_EFFECT);
 				P.displayZoneText(ZONE_UPPER, dispText_H, PA_CENTER, SPEED_TIME, PAUSE_TIME, PA_PRINT, PA_NO_EFFECT);
-
 			}
 
 
@@ -505,11 +495,12 @@ void loop()
 			startBtn_last = startBtn;	
 
 
-
-
-
-
-			// Time out after 30 second sand go back to lobby
+			// After timeout period elapsed, go back to lobby
+			if (millis() - timer_startTime > TIMEOUT)
+			{
+				currentState = ST_RT_LOBBY;
+				delay(100);															// Delay for display to get its act together
+			}
 
 			break;
 
