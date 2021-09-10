@@ -2,11 +2,9 @@
 	* 2 modes implemented
 		* Stopwatch (counts up to 999 seconds, then stops)
 		* Reaction test timer
-	* Switch between modes by holding both buttons for 10 seconds
+	* Switch between modes by holding reset button for 10ish seconds
 
 DISPLAY INFO
-Display the time in a double height display with a fixed width font.
-- Time is shown in a user defined seven segment font
 - MD_MAX72XX library can be found at https://github.com/MajicDesigns/MD_MAX72XX
 
 Each font file has the lower part of a character as ASCII codes 0-127 and the
@@ -14,10 +12,6 @@ upper part of the character in ASCII code 128-255. Adding 128 to each lower
 character creates the correct index for the upper character.
 The upper and lower portions are managed as 2 zones 'stacked' on top of each other
 so that the module numbers are in the sequence shown below:
-
-* Modules (like FC-16) that can fit over each other with no gap
- n n-1 n-2 ... n/2+1   <- this direction top row
- n/2 ... 3  2  1  0    <- this direction bottom row
 
 Sending the original string to the lower zone and the modified (+128) string to the
 upper zone creates the complete message on the display.
@@ -31,15 +25,6 @@ upper zone creates the complete message on the display.
 #include "Font_Data.h"
 #include "ENUMVars.h"
 
-// DISPLAY SETUP
-#define HARDWARE_TYPE 	MD_MAX72XX::FC16_HW
-#define MAX_ZONES 			2
-#define ZONE_SIZE 			5
-#define MAX_DEVICES 		(MAX_ZONES * ZONE_SIZE)
-
-#define ZONE_UPPER  		1
-#define ZONE_LOWER  		0
-
 // IO Setup
 #define DISP_CLK_PIN   	15
 #define DISP_DATA_PIN  	16
@@ -51,34 +36,34 @@ upper zone creates the complete message on the display.
 #define LED_PIN     		6
 #define RAND_ANALOG_PIN	21 												// Analog pin -- Leave pin floating -- used to seed random number generator
 
-// Rection Test Vars
-#define RT_DELAY_MIN 		1500											// Minimum delay period for start of reaction test
-#define RT_DELAY_MAX		8000											// Maximum delay period for start of reaction test
+// DISPLAY SETUP
+#define HARDWARE_TYPE 	MD_MAX72XX::FC16_HW
+#define MAX_ZONES 			2
+#define ZONE_SIZE 			5
+#define MAX_DEVICES 		(MAX_ZONES * ZONE_SIZE)
+#define ZONE_UPPER  		1
+#define ZONE_LOWER  		0
+#define SPEED_TIME  		0 												// Used for display - these would be more useful if I were doing text animations, but alas I'm just using static text
+#define PAUSE_TIME  		0 												// Used for display - one of these is actually refresh rate of screen
+#define MAX_MESG  			9 												// Max text length passed to display functions (including null terminator on strings)
 
-timerStates currentState = ST_RT_LOBBY;
+char  dispText_L[MAX_MESG]; 											// Upper & Lower zone screen text buffers
+char  dispText_H[MAX_MESG];
+
+MD_Parola P = MD_Parola(HARDWARE_TYPE, DISP_CS_PIN, MAX_DEVICES); // Initialise display using hardware SPI
+
+// Game state tracking
+timerStates currentState = ST_RT_LOBBY; 					// State system initialises into
 timerStates lastState = ST_NULL;
 
-
-// Hardware SPI connection
-MD_Parola P = MD_Parola(HARDWARE_TYPE, DISP_CS_PIN, MAX_DEVICES);
-
-#define SPEED_TIME  		0
-#define PAUSE_TIME  		0
-
-#define MAX_MESG  			9
-
-
-#define DISP_REFRESH 		50 												// (ms) update rate of display
+// Timing parameters
 #define DEBOUNCE				300												// (ms) button debounce
 #define FLASH 					300												// (ms) Period timer flashes with once stopped
 #define BEEP_LEN				100 											// (ms) length to beep for on button press
+#define TIMEOUT					FLASH * 34								// (ms) Timeout - change state if nothing happened in this time 
+#define RT_DELAY_MIN 		1500											// (ms) Min delay period to start of reaction test in
+#define RT_DELAY_MAX		8000											// (ms) Max delay period to start of reaction test in
 
-#define TIMEOUT					FLASH * 34								// Timeout - change state if nothing happened in this time 
-
-
-// Global variables
-char  dispText_L[MAX_MESG];
-char  dispText_H[MAX_MESG];
 
 
 void getSWTimerText(char *psz, uint32_t elapsedMillis)
@@ -88,9 +73,9 @@ void getSWTimerText(char *psz, uint32_t elapsedMillis)
 	uint16_t mins;
 
 	secs 				= elapsedMillis / 1000;							// Calculate seconds
-	secs_remain = elapsedMillis % 1000; 						// Remainder of milliseconds
+	secs_remain = elapsedMillis % 1000; 						// Remainder of secs in milliseconds
 	mins  			= elapsedMillis / 60000; 						// Minutes
-	mins_remain = (elapsedMillis % 60000) / 1000; 	// Remainder of minutes
+	mins_remain = (elapsedMillis % 60000) / 1000; 	// Remainder of minutes in secs... I think
 
 	// We only have space for 3 characters and '.' so format time to fit that
 	if (elapsedMillis < 1000)
@@ -193,6 +178,7 @@ void setup(void)
 	pinMode(LED_PIN, OUTPUT);
 	pinMode(RAND_ANALOG_PIN, INPUT);
 	pinMode(BEEP_PIN, OUTPUT);
+	digitalWrite(BEEP_PIN, HIGH);										// Turn off beeper	
 
 	// initialise the LED display
 	P.begin(MAX_ZONES);
@@ -200,17 +186,10 @@ void setup(void)
 	// Set up zones for 2 halves of the display
 	P.setZone(ZONE_LOWER, 0, ZONE_SIZE - 1);
 	P.setZone(ZONE_UPPER, ZONE_SIZE, MAX_DEVICES - 1);
-
 	P.displayZoneText(ZONE_LOWER, dispText_L, PA_CENTER, SPEED_TIME, PAUSE_TIME, PA_PRINT, PA_NO_EFFECT);
 	P.displayZoneText(ZONE_UPPER, dispText_H, PA_CENTER, SPEED_TIME, PAUSE_TIME, PA_PRINT, PA_NO_EFFECT);
-
 	P.setIntensity(2); 															// Brightness Range: 0-15
-
-	// Turn off beeper - allowing a little time to beep first
-	// delay(50);
-	digitalWrite(BEEP_PIN, HIGH);					
 }
-
 
 
 void loop()
@@ -257,7 +236,6 @@ void loop()
 				timer_startTime = millis();
 				currentState = ST_SW_RUN;
 				startBtn_last = startBtn;
-				// digitalWrite(BEEP_PIN, LOW);
 			}
 			break;
 
@@ -279,15 +257,11 @@ void loop()
 			if (millis() - timer_startTime > DEBOUNCE *2)	// don't allow resets in first second
 			{
 				startBtn = digitalRead(BTN_START_PIN);
-				// digitalWrite(BEEP_PIN, HIGH);
 
 				if (!startBtn) 														// If start button pressed...
 				{
 					if (startBtn_last)											// and wasn't prevously
-					{
 						currentState = ST_SW_STOP;						// Change state! (debounce in next state)
-						// digitalWrite(BEEP_PIN, LOW);
-					}
 				}
 				startBtn_last = startBtn;
 			}
@@ -359,7 +333,6 @@ void loop()
 				sprintf(dispText_H, "REACTION");
 				sprintf(dispText_L, "TEST");
 			}
-
 
 			// Check for button press to begin game
 			startBtn = digitalRead(BTN_START_PIN);
@@ -484,10 +457,7 @@ void loop()
 					break;
 
 				lastState = currentState;
-
-
 				timer_startTime = millis();
-					// timer_startTime = millis();
 
 				analogWrite(LED_PIN, 255);
 			}
@@ -533,7 +503,3 @@ void loop()
 		checkGameChanger();
 	}
 }
-
-
-
-// TODO - add beeps to stopwatch when button pressed
