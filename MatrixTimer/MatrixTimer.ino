@@ -83,21 +83,49 @@ char  dispText_H[MAX_MESG];
 void getSWTimerText(char *psz, uint32_t elapsedMillis)
 {
 	// Generates string from given value
-	uint16_t  secs, ms;
+	uint8_t  secs, secs_remain, mins_remainder;
+	uint16_t mins;
 
-	secs 	= (elapsedMillis / 1000);									// Calculate seconds
-	ms 		= (elapsedMillis % 1000); 								// Remainder of milliseconds
+	elapsedMillis += 60000000 - 5000;
+
+	secs 						= elapsedMillis / 1000;									// Calculate seconds
+	secs_remain 		= elapsedMillis % 1000; 								// Remainder of milliseconds
+	mins  					= elapsedMillis / 60000;
+	mins_remainder 	= (elapsedMillis % 60000) / 1000;
 
 	if (elapsedMillis < 1000)
-		sprintf(psz, "%c%03d", '.', elapsedMillis);
+		sprintf(psz, "%c%03d", '.', elapsedMillis);										// ".000" .ms-ms-ms
 	else if (elapsedMillis < 10000 )
-		sprintf(psz, "%01d%c%02d", secs, '.', ms /10);
+		sprintf(psz, "%01d%c%02d", secs, '.', secs_remain /10);				// "0.00" s.ms-ms
 	else if (elapsedMillis < 100000)								// We only have space for 3 characters and '.'
-		sprintf(psz, "%02d%c%01d", secs, '.', ms /100);
-	else if (elapsedMillis > 999000)
-		currentState = ST_SW_READY;										// Stop timer after 999 seconds (Can't dispay over 999 seconds)
+		sprintf(psz, "%02d%c%01d", secs, '.', secs_remain /100);			// "00.0" ss.ms
+	else if (elapsedMillis < 600000)															// (60*9+60)*1000 = 600000
+		sprintf(psz, "%01d%c%02d", mins, ':', mins_remainder);		// "0.00" m.ss
+	else if (elapsedMillis < 6000000)															// (60*99+60)*1000 = 6000000
+		sprintf(psz, "%02d%c%01d", mins, ':', mins_remainder /10);		// "00.0" mm.s 
+	else if (elapsedMillis >= 60000000) 													// 1000*60*1000 = 60000000
+	{
+		currentState = ST_SW_READY;										// Stop timer after 999 mins (I'm assuming no one will use this longer than 16 or so hours)
+		beepPattern(3, 50);
+	}
 	else
-		sprintf(psz, "%d", secs);
+		sprintf(psz, "%d", mins);																			// "000" mmm
+
+	return;
+}
+
+void beepPattern(uint8_t num, uint8_t period)
+{
+	// Beeps given number of times with beep length = period
+	// Note: this is a blocking function because I used delay
+
+	for (uint8_t i = 0; i < num; ++i)
+	{
+		digitalWrite(BEEP_PIN, LOW);
+		delay(period);
+		digitalWrite(BEEP_PIN, HIGH);
+		delay(period);
+	}
 
 	return;
 }
@@ -127,26 +155,12 @@ void checkGameChanger()
 			if (currentState < ST_RT_LOBBY) 						// Change mode & beep to indicate change
 			{
 				currentState = ST_RT_LOBBY;								// Change to Reaction Test mode
-
-				for (uint8_t i = 0; i < 5; ++i)
-				{
-					digitalWrite(BEEP_PIN, LOW);
-					delay(50);
-					digitalWrite(BEEP_PIN, HIGH);
-					delay(50);
-				}
+				beepPattern(5, 50);
 			}
 			else
 			{
 				currentState = ST_SW_READY; 							// Change to StopWatch mode
-
-				for (uint8_t i = 0; i < 3; ++i)
-				{
-					digitalWrite(BEEP_PIN, LOW);
-					delay(50);
-					digitalWrite(BEEP_PIN, HIGH);
-					delay(50);
-				}
+				beepPattern(3, 50);
 			}
 			lastState = ST_NULL;
 			modetimer_start = millis(); 								// Reset mode change timer
@@ -181,6 +195,7 @@ void setup(void)
 	P.setIntensity(2); 															// Brightness Range: 0-15
 
 	// Turn off beeper
+	delay(50);
 	digitalWrite(BEEP_PIN, HIGH);					
 }
 
@@ -227,12 +242,15 @@ void loop()
 				timer_startTime = millis();
 				currentState = ST_SW_RUN;
 				startBtn_last = startBtn;
+				digitalWrite(BEEP_PIN, LOW);
 			}
 			break;
 
 		case ST_SW_RUN:
 			// Set button LED Brightness
 			analogWrite(LED_PIN, Brightness);
+			if (currentState != lastState)
+				lastState = currentState;
 
 			Brightness += direction;
 			if (Brightness > 255)
@@ -244,6 +262,7 @@ void loop()
 			if (millis() - timer_startTime > DEBOUNCE)	// don't allow resets in first second
 			{
 				startBtn = digitalRead(BTN_START_PIN);
+				digitalWrite(BEEP_PIN, HIGH);
 
 				if (!startBtn) 														// If start button pressed...
 				{
