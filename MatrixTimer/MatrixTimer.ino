@@ -55,7 +55,7 @@ upper zone creates the complete message on the display.
 #define RT_DELAY_MIN 		1500											// Minimum delay period for start of reaction test
 #define RT_DELAY_MAX		8000											// Maximum delay period for start of reaction test
 
-timerStates currentState = ST_SW_READY;
+timerStates currentState = ST_RT_LOBBY;
 timerStates lastState = ST_NULL;
 
 
@@ -71,6 +71,7 @@ MD_Parola P = MD_Parola(HARDWARE_TYPE, DISP_CS_PIN, MAX_DEVICES);
 #define DISP_REFRESH 		50 												// (ms) update rate of display
 #define DEBOUNCE				300												// (ms) button debounce
 #define FLASH 					300												// (ms) Period timer flashes with once stopped
+#define BEEP_LEN				100 											// (ms) length to beep for on button press
 
 #define TIMEOUT					FLASH * 34								// Timeout - change state if nothing happened in this time 
 
@@ -83,33 +84,32 @@ char  dispText_H[MAX_MESG];
 void getSWTimerText(char *psz, uint32_t elapsedMillis)
 {
 	// Generates string from given value
-	uint8_t  secs, secs_remain, mins_remainder;
+	uint8_t  secs, secs_remain, mins_remain;
 	uint16_t mins;
 
-	elapsedMillis += 60000000 - 5000;
+	secs 				= elapsedMillis / 1000;							// Calculate seconds
+	secs_remain = elapsedMillis % 1000; 						// Remainder of milliseconds
+	mins  			= elapsedMillis / 60000; 						// Minutes
+	mins_remain = (elapsedMillis % 60000) / 1000; 	// Remainder of minutes
 
-	secs 						= elapsedMillis / 1000;									// Calculate seconds
-	secs_remain 		= elapsedMillis % 1000; 								// Remainder of milliseconds
-	mins  					= elapsedMillis / 60000;
-	mins_remainder 	= (elapsedMillis % 60000) / 1000;
-
+	// We only have space for 3 characters and '.' so format time to fit that
 	if (elapsedMillis < 1000)
-		sprintf(psz, "%c%03d", '.', elapsedMillis);										// ".000" .ms-ms-ms
+		sprintf(psz, "%c%03d", '.', elapsedMillis);								// ".000" .ms-ms-ms
 	else if (elapsedMillis < 10000 )
-		sprintf(psz, "%01d%c%02d", secs, '.', secs_remain /10);				// "0.00" s.ms-ms
-	else if (elapsedMillis < 100000)								// We only have space for 3 characters and '.'
-		sprintf(psz, "%02d%c%01d", secs, '.', secs_remain /100);			// "00.0" ss.ms
-	else if (elapsedMillis < 600000)															// (60*9+60)*1000 = 600000
-		sprintf(psz, "%01d%c%02d", mins, ':', mins_remainder);		// "0.00" m.ss
-	else if (elapsedMillis < 6000000)															// (60*99+60)*1000 = 6000000
-		sprintf(psz, "%02d%c%01d", mins, ':', mins_remainder /10);		// "00.0" mm.s 
-	else if (elapsedMillis >= 60000000) 													// 1000*60*1000 = 60000000
+		sprintf(psz, "%01d%c%02d", secs, '.', secs_remain /10);		// "0.00" s.ms-ms
+	else if (elapsedMillis < 100000)								
+		sprintf(psz, "%02d%c%01d", secs, '.', secs_remain /100);	// "00.0" ss.ms --> (60*9+60)*1000  = 600000
+	else if (elapsedMillis < 600000)														
+		sprintf(psz, "%01d%c%02d", mins, ':', mins_remain);				// "0:00" m.ss  --> (60*99+60)*1000 = 6000000
+	else if (elapsedMillis < 6000000)														 
+		sprintf(psz, "%02d%c%01d", mins, ':', mins_remain /10);		// "00:0" mm.s  --> 1000*60*1000 		= 60000000
+	else if (elapsedMillis >= 60000000) 													
 	{
 		currentState = ST_SW_READY;										// Stop timer after 999 mins (I'm assuming no one will use this longer than 16 or so hours)
 		beepPattern(3, 50);
 	}
 	else
-		sprintf(psz, "%d", mins);																			// "000" mmm
+		sprintf(psz, "%d", mins);																	// "000" mmm
 
 	return;
 }
@@ -126,6 +126,18 @@ void beepPattern(uint8_t num, uint8_t period)
 		digitalWrite(BEEP_PIN, HIGH);
 		delay(period);
 	}
+
+	return;
+}
+
+
+void checkBtnBeep(uint32_t time)
+{
+	// Use to make beep sound on button press
+	if (millis() - time > BEEP_LEN)	
+		digitalWrite(BEEP_PIN, HIGH);
+	else
+		digitalWrite(BEEP_PIN, LOW);
 
 	return;
 }
@@ -194,8 +206,8 @@ void setup(void)
 
 	P.setIntensity(2); 															// Brightness Range: 0-15
 
-	// Turn off beeper
-	delay(50);
+	// Turn off beeper - allowing a little time to beep first
+	// delay(50);
 	digitalWrite(BEEP_PIN, HIGH);					
 }
 
@@ -228,11 +240,14 @@ void loop()
 				analogWrite(LED_PIN, 255); 
 				sprintf(dispText_L, "---");
 				createHString(dispText_H, dispText_L);
+				timer_startTime = millis(); 							// Used for beeper
 
 				P.setIntensity(4);
 				P.setFont(numeric7SegDouble_V2);
 				P.setCharSpacing(2); 											// double height --> double spacing
 			}
+
+			checkBtnBeep(timer_startTime);
 
 			resetBtn = digitalRead(BTN_RESET_PIN);			// Get button states
 			startBtn = digitalRead(BTN_START_PIN);
@@ -242,7 +257,7 @@ void loop()
 				timer_startTime = millis();
 				currentState = ST_SW_RUN;
 				startBtn_last = startBtn;
-				digitalWrite(BEEP_PIN, LOW);
+				// digitalWrite(BEEP_PIN, LOW);
 			}
 			break;
 
@@ -252,6 +267,8 @@ void loop()
 			if (currentState != lastState)
 				lastState = currentState;
 
+			checkBtnBeep(timer_startTime);
+
 			Brightness += direction;
 			if (Brightness > 255)
 				direction *= -1;
@@ -259,15 +276,18 @@ void loop()
 				direction *= -1;
 
 			//Check button
-			if (millis() - timer_startTime > DEBOUNCE)	// don't allow resets in first second
+			if (millis() - timer_startTime > DEBOUNCE *2)	// don't allow resets in first second
 			{
 				startBtn = digitalRead(BTN_START_PIN);
-				digitalWrite(BEEP_PIN, HIGH);
+				// digitalWrite(BEEP_PIN, HIGH);
 
 				if (!startBtn) 														// If start button pressed...
 				{
 					if (startBtn_last)											// and wasn't prevously
+					{
 						currentState = ST_SW_STOP;						// Change state! (debounce in next state)
+						// digitalWrite(BEEP_PIN, LOW);
+					}
 				}
 				startBtn_last = startBtn;
 			}
@@ -289,7 +309,10 @@ void loop()
 			{
 				lastState = currentState;
 				disp_lastTime = millis();
+				timer_startTime = millis(); 							// Used for beeper
 			}
+
+			checkBtnBeep(timer_startTime);
 
 			if (millis() - disp_lastTime >= FLASH)
 			{
@@ -326,6 +349,7 @@ void loop()
 			{
 				lastState = currentState;
 				analogWrite(LED_PIN, 255);
+				timer_startTime = millis(); 							// Used for beeper
 
 				P.setIntensity(7);
 				P.setFont(SE_CapsNums_V2);								// Change font to single height
@@ -347,6 +371,7 @@ void loop()
 			}
 
 			startBtn_last = startBtn;	
+			checkBtnBeep(timer_startTime);
 
 			break;
 
@@ -356,6 +381,7 @@ void loop()
 			if (lastState != currentState)
 			{
 				analogWrite(LED_PIN, 0);
+				digitalWrite(BEEP_PIN, LOW);	
 
 				// Display "ready"
 				P.setIntensity(4);
@@ -370,8 +396,10 @@ void loop()
 
 				randomSeed(analogRead(RAND_ANALOG_PIN)); 	// Seed random number generator
 				RT_Delay = random(RT_DELAY_MIN, RT_DELAY_MAX);
-				timer_startTime = millis(); 							// Initiate random delay timer timer
+				timer_startTime = millis(); 							// Used for beeper
 			}
+
+			checkBtnBeep(timer_startTime);
 
 			// Wait for random time length (after button released from previous state)
 			if (timer_startTime + RT_Delay < millis())
@@ -411,12 +439,14 @@ void loop()
 			{
 				timer_elapsed = millis() - timer_startTime;		// Record elapsed time
 				currentState = ST_RT_STOP;								// Jump to new state
+				timer_startTime = millis();								// Used for debounding in next state
 			}
 			// Stop if >10s has elapsed
 			else if (millis() - timer_startTime > TIMEOUT)
 			{
 				timer_elapsed = TIMEOUT;									// Record elapsed time
 				currentState = ST_RT_STOP;								// Jump to new state
+				timer_startTime = millis();								// Used for debounding in next state
 			}
 			break;
 
@@ -426,20 +456,17 @@ void loop()
 
 			if (currentState != lastState)							// If first run of this state
 			{
-				lastState = currentState;
-				startBtn_last = digitalRead(BTN_START_PIN);
-
-				digitalWrite(BEEP_PIN, HIGH);
+				lastState = ST_NULL;											// Yep, this is messy, but I have my reasons
 
 				if (timer_elapsed == 0) 									// Button was pushed early
 				{
-					sprintf(dispText_L, "EARLY");
 					P.setCharSpacing(1);
+					sprintf(dispText_L, "EARLY");
 				}
 				else if (timer_elapsed >= TIMEOUT) 				// Button was pushed late (timed out)
 				{
-					sprintf(dispText_L, "LATE");
 					P.setCharSpacing(1);
+					sprintf(dispText_L, "LATE");
 				}
 				else  																		// Display reaction time 
 				{
@@ -448,11 +475,19 @@ void loop()
 				}
 
 				createHString(dispText_H, dispText_L);
-				// P.displayAnimate();
+
+				startBtn_last = digitalRead(BTN_START_PIN); 
+				// Debounce button & pause if still held from previous state
+				if ((millis() - timer_startTime) <= DEBOUNCE)
+					break;
+				if (!startBtn_last)
+					break;
+
+				lastState = currentState;
+
 
 				timer_startTime = millis();
-				while ((millis() - timer_startTime) > DEBOUNCE)
-					timer_startTime = millis();
+					// timer_startTime = millis();
 
 				analogWrite(LED_PIN, 255);
 			}
@@ -470,11 +505,12 @@ void loop()
 			else
 				P.setIntensity(5);
 
+			checkBtnBeep(timer_startTime);
 
 			if (millis() - timer_startTime > TIMEOUT) 				// After timeout period elapsed, go back to lobby
 				currentState = ST_RT_LOBBY;
 			else if (millis() - timer_startTime > DEBOUNCE)		// Check for button press to play again
-			{
+			{		
 				startBtn = digitalRead(BTN_START_PIN);					// Get button states
 
 				if (!startBtn && startBtn_last) 								// If start button pressed & wasn't perviously
@@ -482,7 +518,6 @@ void loop()
 
 				startBtn_last = startBtn;	
 			}
-
 			break;
 
 
